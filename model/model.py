@@ -28,3 +28,34 @@ class MultiHeadAttention(tf.keras.Model):
         output = self.linear(output)
 
         return output,attention_weight,scaled_attention_logit
+
+class EncoderBlock(tf.keras.Model):
+    def __init__(self,hidden_size,head_num,pool_size,dropout,layer_norm_epsilon):
+        super(EncoderBlock,self).__init__()
+        self.hidden_size = hidden_size/pool_size # pool_size = 16,8,4,2,1로 고정
+        self.pool = tf.keras.layers.AveragePooling2D((pool_size,pool_size))
+        self.pool_mask = tf.keras.layers.AveragePooling1D(pool_size)
+        self.MultiHeadAttention = MultiHeadAttention(self.hidden_size, head_num)
+        self.MHA_Dropout = tf.keras.layers.Dropout(dropout)
+        self.MHA_Normalization = tf.keras.layers.LayerNormalization(epsilon=layer_norm_epsilon)
+
+        self.FFN = tf.keras.Sequential([
+            tf.keras.layers.Dense(self.hidden_size * 4),
+            tf.keras.layers.LeakyReLU(),
+            tf.keras.layers.Dense(self.hidden_size)])
+        self.FFN_Dropout = tf.keras.layers.Dropout(dropout)
+        self.FFN_Normalization = tf.keras.layers.LayerNormalization(epsilon=layer_norm_epsilon)
+
+    def call(self,X,mask):
+        pooled_X = tf.squeeze(self.pool(tf.expand_dims(X,axis=-1)))
+
+        normalized_X = self.MHA_Normalization(pooled_X)
+        attention_weight, attention_output = self.MultiHeadAttention(normalized_X,mask)
+        print(attention_output.shape)
+        #여기서부터 해결
+        attention_output = X + self.MHA_Dropout(attention_output)
+
+        normalized_attention_output = self.FFN_Normalization(attention_output)
+        FFN_output = attention_output + self.FFN_Dropout(self.FFN(normalized_attention_output))
+
+        return attention_weight, FFN_output

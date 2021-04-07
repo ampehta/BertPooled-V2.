@@ -2,8 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="9c0cd0a7-0fff-4540-8e91-3369a622cd22" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/model/model.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/notes.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/model/model.py" beforeDir="false" afterPath="$PROJECT_DIR$/model/model.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -52,5 +51,6 @@
         </entry>
       </map>
     </option>
+    <option name="oldMeFiltersMigrated" value="true" />
   </component>
 </project>
