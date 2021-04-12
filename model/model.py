@@ -3,64 +3,78 @@ import numpy as np
 import random
 
 class PooledBert(tf.keras.Model):
-    def __init__(self, tokenizer, config):
-        super(PooledBert, self).__init__()
+    def __init__(self,tokenizer,config):
+        super(PooledBert,self).__init__()
         self.tokenizer = tokenizer
         self.config = config
         self.EmbeddingLayer = EmbeddingLayer(config)
-        self.encoder_16 = EncoderBlock(config, 1)
-        self.encoder_8 = EncoderBlock(config, 1)
-        self.encoder_4 = EncoderBlock(config, 1)
-        self.encoder_2 = EncoderBlock(config, 1)
-        self.encoder_1 = EncoderBlock(config, 1)
 
-    def call(self, batch_data):  # dataloader -> tokenizer -> Bert[embedding-> MHA-> head -> result]
-        input_ids, attention_mask = self.tokenize(batch_data)
-        masked_input_ids = self.mask_sentence(input_ids, attention_mask)
+        self.encoder_16 = EncoderBlock(config,16)
+        self.encoder_8 = EncoderBlock(config,8)
+        self.encoder_4 = EncoderBlock(config,4)
+        self.encoder_2 = EncoderBlock(config,2)
+        self.encoder_1 = EncoderBlock(config,1)
+        self.MLM_head = MaskedLanguageModel(self.tokenizer.vocab_size)
+        
 
-        embeddings = self.EmbeddingLayer(masked_input_ids)
-        attention_mask = tf.cast(attention_mask, dtype=tf.float32)
+    def call(self,batch_data,train=False): # dataloader -> tokenizer -> Bert[embedding-> MHA-> head -> result]
+        input_ids,attention_mask = self.tokenize(batch_data)
+        input_ids_duplicated = tf.identity(input_ids) #tf.function 사용시 에러 
+        if train:
+            input_ids = self.mask_sentence(input_ids,attention_mask)
+            loss_mask = tf.not_equal(input_ids_duplicated,input_ids)
 
-        attention_weight_16, output_16 = self.encoder_16(embeddings, attention_mask)
-        attention_weight_8, output_8 = self.encoder_8(output_16, attention_mask)
-        attention_weight_4, output_4 = self.encoder_4(output_8, attention_mask)
-        attention_weight_2, output_2 = self.encoder_2(output_4, attention_mask)
-        attention_weight_1, output_1 = self.encoder_1(output_2, attention_mask)
+        embeddings = self.EmbeddingLayer(input_ids)
+        attention_mask = tf.cast(attention_mask,dtype=tf.float32)
 
-        return output_1, masked_input_ids
+        attention_weight_16, output_16 = self.encoder_16(embeddings,attention_mask)
+        attention_weight_8, output_8 = self.encoder_8(output_16,attention_mask)
+        attention_weight_4, output_4 = self.encoder_4(output_8,attention_mask)
+        attention_weight_2, output_2 = self.encoder_2(output_4,attention_mask)
+        attention_weight_1, output_1 = self.encoder_1(output_2,attention_mask)
 
-    def tokenize(self, batch_data):
-        output = self.tokenizer.batch_encode_plus(batch_data, padding='max_length', max_length=self.config.max_len,
+        output = self.MLM_head(output_1)
+
+        if train:
+            label = tf.boolean_mask(input_ids,loss_mask)
+            return output , loss_mask , label
+
+        return output
+
+    def tokenize(self,batch_data):
+        output = self.tokenizer.batch_encode_plus(batch_data,padding='max_length',max_length=self.config.max_len,
                                                   return_token_type_ids=False)
-        return output['input_ids'], output['attention_mask']
-
-    def mask_sentence(self, batch_input_ids, batch_attention_mask):
+        return output['input_ids'],output['attention_mask']
+    
+    def mask_sentence(self,batch_input_ids,batch_attention_mask):
         batch_masked_ids = []
-        for input_ids, attention_mask in zip(batch_input_ids, batch_attention_mask):
+        for input_id,attention_mask in zip(batch_input_ids,batch_attention_mask):
             coin = random.random()
             words = tf.math.reduce_sum(attention_mask)
 
             if coin < self.config.no_mask_ratio:
-                batch_masked_ids.append(input_ids)
+                batch_masked_ids.append(input_id)
 
             elif self.config.no_mask_ratio < coin < self.config.no_mask_ratio + self.config.mask_ratio:
-                mask_idx = random.randint(0, words - 1)
-                input_ids[mask_idx] = self.tokenizer.mask_token_id
-                batch_masked_ids.append(input_ids)
+                mask_idx = random.randint(1,words-2)
+                input_id[mask_idx] = self.tokenizer.mask_token_id
+                batch_masked_ids.append(input_id)
 
             elif self.config.no_mask_ratio + self.config.mask_ratio < coin < self.config.no_mask_ratio + self.config.mask_ratio + self.config.random_mask_ratio:
-                mask_idx = random.randint(0, words - 1)
-                alternative_token_id = random.randint(0, self.tokenizer.vocab_size)
-                input_ids[mask_idx] = alternative_token_id
-                batch_masked_ids.append(input_ids)
-            else:
-                iteration = random.randint(0, words - 1)
-                for n in range(iteration):
-                    mask_idx = random.randint(0, words - 1)
-                    input_ids[mask_idx] = self.tokenizer.mask_token_id
-                batch_masked_ids.append(input_ids)
+                mask_idx = random.randint(1,words-2)
+                alternative_token_id = random.randint(0,self.tokenizer.vocab_size)
+                input_id[mask_idx] = alternative_token_id
+                batch_masked_ids.append(input_id)
 
-        return tf.constant(batch_masked_ids, dtype=tf.float32)
+            else:
+                iteration = random.randint(1,words-2)
+                for n in range(iteration):
+                    mask_idx = random.randint(1,words-2)
+                    input_id[mask_idx] = self.tokenizer.mask_token_id
+                batch_masked_ids.append(input_id)
+
+        return tf.constant(batch_masked_ids)
+
 
 class MultiHeadAttention(tf.keras.Model):
     def __init__(self,config,pool_size):
@@ -146,3 +160,11 @@ class EmbeddingLayer(tf.keras.Model):
 
         pos_encoding = angle_rads[np.newaxis, ...]
         return tf.cast(pos_encoding, dtype=tf.float32)
+    
+    
+class MaskedLanguageModel(tf.keras.Model):
+    def __init__(self,vocab_size):
+        super(MaskedLanguageModel,self).__init__()
+        self.linear = tf.keras.layers.Dense(vocab_size)
+    def call(self, x):
+        return tf.nn.softmax(self.linear(x),axis=-1)
