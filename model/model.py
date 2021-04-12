@@ -36,7 +36,7 @@ class PooledBert(tf.keras.Model):
         output = self.MLM_head(output_1)
 
         if train:
-            label = tf.boolean_mask(input_ids,loss_mask)
+            label = tf.boolean_mask(input_ids_duplicated,loss_mask)
             return output , loss_mask , label
 
         return output
